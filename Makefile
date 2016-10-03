@@ -702,7 +702,11 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, address-of-packed-member)
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS	+= -Os
 else
+ifdef CONFIG_CC_OPTIMIZE_HARDER
+KBUILD_CFLAGS	+= -O3
+else
 KBUILD_CFLAGS   += -O2
+endif
 endif
 
 ifdef CONFIG_CC_DISABLE_WARN_MAYBE_UNINITIALIZED
@@ -1799,3 +1803,4 @@ FORCE:
 # Declare the contents of the PHONY variable as phony.  We keep that
 # information in a variable so we can use it in if_changed and friends.
 .PHONY: $(PHONY)
+
