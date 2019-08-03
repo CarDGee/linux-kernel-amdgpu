@@ -51,6 +51,20 @@ choice
 	 on SMP and NUMA systems and exactly dividing by both PAL and
 	 NTSC frame rates for video and multimedia work.
 
+	config HZ_500_NODEF
+		bool "500 HZ"
+	help
+	 500 Hz is a balanced timer frequency. Provides fast interactivity
+	 on desktops with great smoothness without increasing CPU power
+	 consumption and sacrificing the battery life on laptops.
+
+	config HZ_750
+		bool "750 HZ"
+	help
+	 750 Hz is a hard timer frequency. Provides ultrafast interactivity
+	 on desktops with great smoothness without increasing CPU power
+	 consumption and sacrificing the battery life on laptops.
+
 	config HZ_1000_NODEF
 		bool "1000 HZ"
 	help
@@ -61,10 +75,13 @@ endchoice
 
 config HZ
 	int
-	default 100 if HZ_100
+	default 100 if HZ_100_NODEF
 	default 250 if HZ_250_NODEF
 	default 300 if HZ_300_NODEF
+	default 500 if HZ_500_NODEF
+	default 750 if HZ_750
 	default 1000 if HZ_1000_NODEF
 
 config SCHED_HRTICK
 	def_bool HIGH_RES_TIMERS
+
