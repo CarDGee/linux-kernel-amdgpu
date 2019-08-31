@@ -70,8 +70,10 @@ MODULE_FIRMWARE("amdgpu/raven_gpu_info.bin");
 MODULE_FIRMWARE("amdgpu/picasso_gpu_info.bin");
 MODULE_FIRMWARE("amdgpu/raven2_gpu_info.bin");
 MODULE_FIRMWARE("amdgpu/arcturus_gpu_info.bin");
+MODULE_FIRMWARE("amdgpu/renoir_gpu_info.bin");
 MODULE_FIRMWARE("amdgpu/navi10_gpu_info.bin");
 MODULE_FIRMWARE("amdgpu/navi14_gpu_info.bin");
+MODULE_FIRMWARE("amdgpu/navi12_gpu_info.bin");
 
 #define AMDGPU_RESUME_MS		2000
 
@@ -100,8 +102,10 @@ static const char *amdgpu_asic_name[] = {
 	"VEGA20",
 	"RAVEN",
 	"ARCTURUS",
+	"RENOIR",
 	"NAVI10",
 	"NAVI14",
+	"NAVI12",
 	"LAST",
 };
 
@@ -258,43 +262,6 @@ void amdgpu_mm_wreg(struct amdgpu_device *adev, uint32_t reg, uint32_t v,
 	if (adev->asic_type >= CHIP_VEGA10 && reg == 1 && adev->last_mm_index == 0x5702C) {
 		udelay(500);
 	}
-}
-
-/**
- * amdgpu_mm_rreg64 - read a 64 bit memory mapped IO register
- *
- * @adev: amdgpu_device pointer
- * @reg: dword aligned register offset
- *
- * Returns the 64 bit value from the offset specified.
- */
-uint64_t amdgpu_mm_rreg64(struct amdgpu_device *adev, uint32_t reg)
-{
-	uint64_t ret;
-
-	if ((reg * 4) < adev->rmmio_size)
-		ret = readq(((void __iomem *)adev->rmmio) + (reg * 4));
-	else
-		BUG();
-
-	return ret;
-}
-
-/**
- * amdgpu_mm_wreg64 - write to a 64 bit memory mapped IO register
- *
- * @adev: amdgpu_device pointer
- * @reg: dword aligned register offset
- * @v: 64 bit value to write to the register
- *
- * Writes the value specified to the offset specified.
- */
-void amdgpu_mm_wreg64(struct amdgpu_device *adev, uint32_t reg, uint64_t v)
-{
-	if ((reg * 4) < adev->rmmio_size)
-		writeq(v, ((void __iomem *)adev->rmmio) + (reg * 4));
-	else
-		BUG();
 }
 
 /**
@@ -1461,11 +1428,17 @@ static int amdgpu_device_parse_gpu_info_fw(struct amdgpu_device *adev)
 	case CHIP_ARCTURUS:
 		chip_name = "arcturus";
 		break;
+	case CHIP_RENOIR:
+		chip_name = "renoir";
+		break;
 	case CHIP_NAVI10:
 		chip_name = "navi10";
 		break;
 	case CHIP_NAVI14:
 		chip_name = "navi14";
+		break;
+	case CHIP_NAVI12:
+		chip_name = "navi12";
 		break;
 	}
 
@@ -1610,7 +1583,9 @@ static int amdgpu_device_ip_early_init(struct amdgpu_device *adev)
 	case CHIP_VEGA20:
 	case CHIP_RAVEN:
 	case CHIP_ARCTURUS:
-		if (adev->asic_type == CHIP_RAVEN)
+	case CHIP_RENOIR:
+		if (adev->asic_type == CHIP_RAVEN ||
+		    adev->asic_type == CHIP_RENOIR)
 			adev->family = AMDGPU_FAMILY_RV;
 		else
 			adev->family = AMDGPU_FAMILY_AI;
@@ -1621,6 +1596,7 @@ static int amdgpu_device_ip_early_init(struct amdgpu_device *adev)
 		break;
 	case  CHIP_NAVI10:
 	case  CHIP_NAVI14:
+	case  CHIP_NAVI12:
 		adev->family = AMDGPU_FAMILY_NV;
 
 		r = nv_set_ip_blocks(adev);
@@ -1642,9 +1618,6 @@ static int amdgpu_device_ip_early_init(struct amdgpu_device *adev)
 		r = amdgpu_virt_request_full_gpu(adev, true);
 		if (r)
 			return -EAGAIN;
-
-		/* query the reg access mode at the very beginning */
-		amdgpu_virt_init_reg_access_mode(adev);
 	}
 
 	adev->pm.pp_feature = amdgpu_pp_feature_mask;
@@ -1747,28 +1720,34 @@ static int amdgpu_device_fw_loading(struct amdgpu_device *adev)
 
 	if (adev->asic_type >= CHIP_VEGA10) {
 		for (i = 0; i < adev->num_ip_blocks; i++) {
-			if (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_PSP) {
-				if (adev->in_gpu_reset || adev->in_suspend) {
-					if (amdgpu_sriov_vf(adev) && adev->in_gpu_reset)
-						break; /* sriov gpu reset, psp need to do hw_init before IH because of hw limit */
-					r = adev->ip_blocks[i].version->funcs->resume(adev);
-					if (r) {
-						DRM_ERROR("resume of IP block <%s> failed %d\n",
+			if (adev->ip_blocks[i].version->type != AMD_IP_BLOCK_TYPE_PSP)
+				continue;
+
+			/* no need to do the fw loading again if already done*/
+			if (adev->ip_blocks[i].status.hw == true)
+				break;
+
+			if (adev->in_gpu_reset || adev->in_suspend) {
+				r = adev->ip_blocks[i].version->funcs->resume(adev);
+				if (r) {
+					DRM_ERROR("resume of IP block <%s> failed %d\n",
 							  adev->ip_blocks[i].version->funcs->name, r);
-						return r;
-					}
-				} else {
-					r = adev->ip_blocks[i].version->funcs->hw_init(adev);
-					if (r) {
-						DRM_ERROR("hw_init of IP block <%s> failed %d\n",
-						  adev->ip_blocks[i].version->funcs->name, r);
-						return r;
-					}
+					return r;
 				}
-				adev->ip_blocks[i].status.hw = true;
+			} else {
+				r = adev->ip_blocks[i].version->funcs->hw_init(adev);
+				if (r) {
+					DRM_ERROR("hw_init of IP block <%s> failed %d\n",
+							  adev->ip_blocks[i].version->funcs->name, r);
+					return r;
+				}
 			}
+
+			adev->ip_blocks[i].status.hw = true;
+			break;
 		}
 	}
+
 	r = amdgpu_pm_load_smu_firmware(adev, &smu_version);
 
 	return r;
@@ -2210,7 +2189,9 @@ static int amdgpu_device_ip_suspend_phase1(struct amdgpu_device *adev)
 			if (r) {
 				DRM_ERROR("suspend of IP block <%s> failed %d\n",
 					  adev->ip_blocks[i].version->funcs->name, r);
+				return r;
 			}
+			adev->ip_blocks[i].status.hw = false;
 		}
 	}
 
@@ -2245,21 +2226,25 @@ static int amdgpu_device_ip_suspend_phase2(struct amdgpu_device *adev)
 			DRM_ERROR("suspend of IP block <%s> failed %d\n",
 				  adev->ip_blocks[i].version->funcs->name, r);
 		}
+		adev->ip_blocks[i].status.hw = false;
 		/* handle putting the SMC in the appropriate state */
 		if (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_SMC) {
 			if (is_support_sw_smu(adev)) {
 				/* todo */
 			} else if (adev->powerplay.pp_funcs &&
-				   adev->powerplay.pp_funcs->set_mp1_state) {
+					   adev->powerplay.pp_funcs->set_mp1_state) {
 				r = adev->powerplay.pp_funcs->set_mp1_state(
 					adev->powerplay.pp_handle,
 					adev->mp1_state);
 				if (r) {
 					DRM_ERROR("SMC failed to set mp1 state %d, %d\n",
 						  adev->mp1_state, r);
+					return r;
 				}
 			}
 		}
+
+		adev->ip_blocks[i].status.hw = false;
 	}
 
 	return 0;
@@ -2312,6 +2297,7 @@ static int amdgpu_device_ip_reinit_early_sriov(struct amdgpu_device *adev)
 		for (j = 0; j < adev->num_ip_blocks; j++) {
 			block = &adev->ip_blocks[j];
 
+			block->status.hw = false;
 			if (block->version->type != ip_order[i] ||
 				!block->status.valid)
 				continue;
@@ -2320,6 +2306,7 @@ static int amdgpu_device_ip_reinit_early_sriov(struct amdgpu_device *adev)
 			DRM_INFO("RE-INIT-early: %s %s\n", block->version->funcs->name, r?"failed":"succeeded");
 			if (r)
 				return r;
+			block->status.hw = true;
 		}
 	}
 
@@ -2347,13 +2334,15 @@ static int amdgpu_device_ip_reinit_late_sriov(struct amdgpu_device *adev)
 			block = &adev->ip_blocks[j];
 
 			if (block->version->type != ip_order[i] ||
-				!block->status.valid)
+				!block->status.valid ||
+				block->status.hw)
 				continue;
 
 			r = block->version->funcs->hw_init(adev);
 			DRM_INFO("RE-INIT-late: %s %s\n", block->version->funcs->name, r?"failed":"succeeded");
 			if (r)
 				return r;
+			block->status.hw = true;
 		}
 	}
 
@@ -2377,17 +2366,19 @@ static int amdgpu_device_ip_resume_phase1(struct amdgpu_device *adev)
 	int i, r;
 
 	for (i = 0; i < adev->num_ip_blocks; i++) {
-		if (!adev->ip_blocks[i].status.valid)
+		if (!adev->ip_blocks[i].status.valid || adev->ip_blocks[i].status.hw)
 			continue;
 		if (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_COMMON ||
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_GMC ||
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_IH) {
+
 			r = adev->ip_blocks[i].version->funcs->resume(adev);
 			if (r) {
 				DRM_ERROR("resume of IP block <%s> failed %d\n",
 					  adev->ip_blocks[i].version->funcs->name, r);
 				return r;
 			}
+			adev->ip_blocks[i].status.hw = true;
 		}
 	}
 
@@ -2412,7 +2403,7 @@ static int amdgpu_device_ip_resume_phase2(struct amdgpu_device *adev)
 	int i, r;
 
 	for (i = 0; i < adev->num_ip_blocks; i++) {
-		if (!adev->ip_blocks[i].status.valid)
+		if (!adev->ip_blocks[i].status.valid || adev->ip_blocks[i].status.hw)
 			continue;
 		if (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_COMMON ||
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_GMC ||
@@ -2425,6 +2416,7 @@ static int amdgpu_device_ip_resume_phase2(struct amdgpu_device *adev)
 				  adev->ip_blocks[i].version->funcs->name, r);
 			return r;
 		}
+		adev->ip_blocks[i].status.hw = true;
 	}
 
 	return 0;
@@ -2524,6 +2516,7 @@ bool amdgpu_device_asic_has_dc_support(enum amd_asic_type asic_type)
 #if defined(CONFIG_DRM_AMD_DC_DCN2_0)
 	case CHIP_NAVI10:
 	case CHIP_NAVI14:
+	case CHIP_NAVI12:
 #endif
 		return amdgpu_dc != 0;
 #endif
@@ -3531,6 +3524,7 @@ bool amdgpu_device_should_recover_gpu(struct amdgpu_device *adev)
 		case CHIP_VEGA20:
 		case CHIP_VEGA10:
 		case CHIP_VEGA12:
+		case CHIP_RAVEN:
 			break;
 		default:
 			goto disabled;

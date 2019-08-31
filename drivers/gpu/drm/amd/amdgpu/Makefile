@@ -67,7 +67,7 @@ amdgpu-$(CONFIG_DRM_AMDGPU_SI)+= si.o gmc_v6_0.o gfx_v6_0.o si_ih.o si_dma.o dce
 amdgpu-y += \
 	vi.o mxgpu_vi.o nbio_v6_1.o soc15.o emu_soc.o mxgpu_ai.o nbio_v7_0.o vega10_reg_init.o \
 	vega20_reg_init.o nbio_v7_4.o nbio_v2_3.o nv.o navi10_reg_init.o navi14_reg_init.o \
-	arct_reg_init.o
+	arct_reg_init.o navi12_reg_init.o
 
 # add DF block
 amdgpu-y += \
@@ -100,7 +100,8 @@ amdgpu-y += \
 	amdgpu_psp.o \
 	psp_v3_1.o \
 	psp_v10_0.o \
-	psp_v11_0.o
+	psp_v11_0.o \
+	psp_v12_0.o
 
 # add SMC block
 amdgpu-y += \
@@ -154,6 +155,7 @@ amdgpu-y += \
 
 # add ATHUB block
 amdgpu-y += \
+	athub_v1_0.o \
 	athub_v2_0.o
 
 # add amdkfd interfaces
